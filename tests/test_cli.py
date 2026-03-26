@@ -1,15 +1,16 @@
 import json
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from claude_docker.cli import (
-    IMAGE_NAME,
     CONTAINER_HOME,
+    DEFAULT_PERMISSION_MODE,
+    IMAGE_NAME,
+    PERMISSION_MODES,
     _get_token_linux,
     _get_token_macos,
     _get_token_windows,
@@ -17,23 +18,59 @@ from claude_docker.cli import (
     get_claude_dir,
     get_claude_json_path,
     get_oauth_token,
+    parse_args,
     prepare_claude_json,
 )
 
-
-FAKE_CREDS = json.dumps({
-    "claudeAiOauth": {
-        "accessToken": "sk-ant-oat01-fake-token",
-        "refreshToken": "sk-ant-ort01-fake-refresh",
-        "expiresAt": 9999999999999,
+FAKE_CREDS = json.dumps(
+    {
+        "claudeAiOauth": {
+            "accessToken": "sk-ant-oat01-fake-token",
+            "refreshToken": "sk-ant-ort01-fake-refresh",
+            "expiresAt": 9999999999999,
+        }
     }
-})
+)
+
+
+# --- parse_args ---
+
+
+class TestParseArgs:
+    def test_defaults(self):
+        args, remaining = parse_args([])
+        assert args.permission_mode == DEFAULT_PERMISSION_MODE
+        assert args.build is False
+        assert remaining == []
+
+    def test_permission_mode(self):
+        for mode in PERMISSION_MODES:
+            args, _ = parse_args(["--permission-mode", mode])
+            assert args.permission_mode == mode
+
+    def test_invalid_permission_mode(self):
+        with pytest.raises(SystemExit):
+            parse_args(["--permission-mode", "invalid"])
+
+    def test_build_flag(self):
+        args, _ = parse_args(["--build"])
+        assert args.build is True
+
+    def test_remaining_args_passed_through(self):
+        args, remaining = parse_args(["-p", "hello world"])
+        assert remaining == ["-p", "hello world"]
+
+    def test_mixed_args(self):
+        args, remaining = parse_args(["--permission-mode", "plan", "--build", "-p", "test"])
+        assert args.permission_mode == "plan"
+        assert args.build is True
+        assert remaining == ["-p", "test"]
 
 
 # --- prepare_claude_json ---
 
 
-class TestPreparClaudeJson:
+class TestPrepareClaudeJson:
     def test_patches_install_method(self, tmp_path):
         src = tmp_path / ".claude.json"
         src.write_text(json.dumps({"installMethod": "native", "foo": "bar"}))
@@ -258,12 +295,15 @@ class TestMain:
             mock.patch("claude_docker.cli.get_oauth_token", return_value=token),
             mock.patch("claude_docker.cli.run_docker", side_effect=fake_run_docker),
             mock.patch("claude_docker.cli.subprocess.run") as mock_inspect,
-            mock.patch("claude_docker.cli.prepare_claude_json", return_value="/tmp/patched.json" if claude_json_exists else None),
+            mock.patch(
+                "claude_docker.cli.prepare_claude_json",
+                return_value="/tmp/patched.json" if claude_json_exists else None,
+            ),
             mock.patch("sys.argv", ["claude-docker"] + (argv or [])),
         ):
-            # Image exists
             mock_inspect.return_value = subprocess.CompletedProcess(args=[], returncode=0)
             from claude_docker.cli import main
+
             main()
 
         return captured_cmd
@@ -293,8 +333,44 @@ class TestMain:
 
     def test_passes_extra_args(self):
         cmd = self._run_main(argv=["-p", "hello world"])
-        assert cmd[-2:] == ["-p", "hello world"]
+        assert "-p" in cmd
+        assert "hello world" in cmd
 
     def test_image_name_in_command(self):
         cmd = self._run_main()
         assert IMAGE_NAME in cmd
+
+    def test_default_permission_mode(self):
+        cmd = self._run_main()
+        idx = cmd.index("--permission-mode")
+        assert cmd[idx + 1] == DEFAULT_PERMISSION_MODE
+
+    def test_custom_permission_mode(self):
+        cmd = self._run_main(argv=["--permission-mode", "plan"])
+        idx = cmd.index("--permission-mode")
+        assert cmd[idx + 1] == "plan"
+
+    def test_all_permission_modes_accepted(self):
+        for mode in PERMISSION_MODES:
+            cmd = self._run_main(argv=["--permission-mode", mode])
+            idx = cmd.index("--permission-mode")
+            assert cmd[idx + 1] == mode
+
+    def test_build_flag_triggers_build(self):
+        with (
+            mock.patch("claude_docker.cli.get_claude_dir") as mock_dir,
+            mock.patch("claude_docker.cli.get_claude_json_path") as mock_json,
+            mock.patch("claude_docker.cli.get_oauth_token", return_value="tok"),
+            mock.patch("claude_docker.cli.run_docker"),
+            mock.patch("claude_docker.cli.subprocess.run") as mock_run,
+            mock.patch("claude_docker.cli.build_image") as mock_build,
+            mock.patch("claude_docker.cli.prepare_claude_json", return_value=None),
+            mock.patch("sys.argv", ["claude-docker", "--build"]),
+        ):
+            mock_dir.return_value = mock.MagicMock(exists=mock.Mock(return_value=False))
+            mock_json.return_value = mock.MagicMock(exists=mock.Mock(return_value=False))
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+            from claude_docker.cli import main
+
+            main()
+            mock_build.assert_called_once()

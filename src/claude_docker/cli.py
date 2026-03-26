@@ -1,3 +1,5 @@
+import argparse
+import contextlib
 import json
 import os
 import platform
@@ -10,20 +12,36 @@ IMAGE_NAME = "claude-docker:latest"
 CONTAINER_USER = "claude"
 CONTAINER_HOME = f"/home/{CONTAINER_USER}"
 
+PERMISSION_MODES = [
+    "default",
+    "acceptEdits",
+    "plan",
+    "auto",
+    "dontAsk",
+    "bypassPermissions",
+]
+
+DEFAULT_PERMISSION_MODE = "bypassPermissions"
+
 
 def build_image():
     dockerfile = Path(__file__).parent / "Dockerfile"
     cmd = [
-        "docker", "build",
-        "-t", IMAGE_NAME,
-        "-f", str(dockerfile),
+        "docker",
+        "build",
+        "-t",
+        IMAGE_NAME,
+        "-f",
+        str(dockerfile),
     ]
 
     # Pass UID/GID on Unix so container user matches host file ownership
     if platform.system() != "Windows":
         cmd += [
-            "--build-arg", f"USER_UID={os.getuid()}",
-            "--build-arg", f"USER_GID={os.getgid()}",
+            "--build-arg",
+            f"USER_UID={os.getuid()}",
+            "--build-arg",
+            f"USER_GID={os.getgid()}",
         ]
 
     cmd.append(str(dockerfile.parent))
@@ -35,7 +53,8 @@ def _get_token_macos():
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             creds = json.loads(result.stdout.strip())
@@ -50,7 +69,8 @@ def _get_token_linux():
     try:
         result = subprocess.run(
             ["secret-tool", "lookup", "service", "Claude Code-credentials"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
             creds = json.loads(result.stdout.strip())
@@ -63,12 +83,11 @@ def _get_token_linux():
 def _get_token_windows():
     """Extract OAuth token from Windows Credential Manager."""
     try:
-        # Use powershell to read from Windows Credential Manager
         ps_cmd = (
-            "powershell -Command \""
+            'powershell -Command "'
             "[System.Net.NetworkCredential]::new('', "
             "(Get-StoredCredential -Target 'Claude Code-credentials').Password"
-            ").Password\""
+            ').Password"'
         )
         result = subprocess.run(ps_cmd, capture_output=True, text=True, shell=True)
         if result.returncode == 0 and result.stdout.strip():
@@ -81,7 +100,6 @@ def _get_token_windows():
 
 def get_oauth_token():
     """Extract Claude OAuth token from the platform's credential store."""
-    # Check environment first (works on all platforms)
     env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
     if env_token:
         return env_token
@@ -122,9 +140,8 @@ def prepare_claude_json(source_path):
         with open(source_path) as f:
             config = json.load(f)
         config["installMethod"] = "npm"
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-        json.dump(config, tmp)
-        tmp.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            json.dump(config, tmp)
         return tmp.name
     except (json.JSONDecodeError, OSError):
         return None
@@ -134,7 +151,6 @@ def run_docker(cmd, patched_json=None):
     """Run docker and clean up temp files. Works on all platforms."""
     try:
         if platform.system() == "Windows":
-            # Windows: no execvp/fork, use subprocess
             result = subprocess.run(cmd)
             sys.exit(result.returncode)
         else:
@@ -149,48 +165,64 @@ def run_docker(cmd, patched_json=None):
                 os.execvp("docker", cmd)
     finally:
         if patched_json:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(patched_json)
-            except OSError:
-                pass
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="claude-docker",
+        description="Run Claude Code inside a Docker container.",
+    )
+    parser.add_argument(
+        "--permission-mode",
+        choices=PERMISSION_MODES,
+        default=DEFAULT_PERMISSION_MODE,
+        help=f"Claude permission mode (default: {DEFAULT_PERMISSION_MODE})",
+    )
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Force rebuild the Docker image",
+    )
+
+    args, remaining = parser.parse_known_args(argv)
+    return args, remaining
 
 
 def main():
+    args, remaining = parse_args()
+
     cwd = os.getcwd()
     claude_dir = get_claude_dir()
     claude_json = get_claude_json_path()
-
-    # Build image if it doesn't exist or --build flag is passed
-    force_build = "--build" in sys.argv
-    if force_build:
-        sys.argv.remove("--build")
 
     result = subprocess.run(
         ["docker", "image", "inspect", IMAGE_NAME],
         capture_output=True,
     )
-    if result.returncode != 0 or force_build:
+    if result.returncode != 0 or args.build:
         print("Building claude-docker image...")
         build_image()
 
     cmd = [
-        "docker", "run",
+        "docker",
+        "run",
         "--rm",
         "-it",
-        "-v", f"{cwd}:/workspace",
+        "-v",
+        f"{cwd}:/workspace",
     ]
 
     if claude_dir.exists():
         cmd += ["-v", f"{claude_dir}:{CONTAINER_HOME}/.claude"]
 
-    # Mount a patched .claude.json with installMethod=npm
     patched_json = None
     if claude_json.exists():
         patched_json = prepare_claude_json(claude_json)
         if patched_json:
             cmd += ["-v", f"{patched_json}:{CONTAINER_HOME}/.claude.json"]
 
-    # Pass OAuth token from platform credential store
     token = get_oauth_token()
     if token:
         cmd += ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={token}"]
@@ -203,8 +235,7 @@ def main():
         )
 
     cmd += [IMAGE_NAME]
-
-    # Pass any extra arguments to claude
-    cmd += sys.argv[1:]
+    cmd += ["--permission-mode", args.permission_mode]
+    cmd += remaining
 
     run_docker(cmd, patched_json)

@@ -35,24 +35,44 @@ pip install .
 ## Usage
 
 ```bash
-# Run Claude Code in the current directory
+# Run Claude Code in the current directory (default: bypassPermissions)
 claude-docker
+
+# Choose a permission mode
+claude-docker --permission-mode default
+claude-docker --permission-mode acceptEdits
+claude-docker --permission-mode plan
+claude-docker --permission-mode auto
+claude-docker --permission-mode dontAsk
+claude-docker --permission-mode bypassPermissions
 
 # Pass arguments to Claude
 claude-docker -p "explain this codebase"
 
 # Force rebuild the Docker image (after updates)
 claude-docker --build
+
+# Combine options
+claude-docker --permission-mode plan --build -p "review this code"
 ```
 
-Claude starts in `bypassPermissions` mode with your current directory mounted as `/workspace`.
+### Permission Modes
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Claude reads files without asking |
+| `acceptEdits` | Claude reads and edits files without asking |
+| `plan` | Claude reads and explores but does not make edits |
+| `auto` | All actions execute without prompts (requires Team plan) |
+| `dontAsk` | Only pre-approved tools execute; everything else is blocked |
+| `bypassPermissions` | All permission checks are skipped (default in Docker) |
 
 ## How it works
 
 1. Builds a Docker image with Claude Code installed via npm
 2. Extracts your OAuth token from the platform's credential store
 3. Mounts your current directory and Claude config into the container
-4. Launches Claude Code with full permissions inside the sandboxed container
+4. Launches Claude Code with the selected permission mode inside the sandboxed container
 
 ### Authentication
 
@@ -80,10 +100,14 @@ git clone https://github.com/brunofitas/claude-docker.git
 cd claude-docker
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -e ".[test]"
+pip install -e ".[dev]"
 
 # Run tests
 pytest tests/ -v
+
+# Lint
+ruff check src/ tests/
+ruff format --check src/ tests/
 ```
 
 ## License

@@ -17,4 +17,4 @@ RUN printf '#!/bin/bash\nexec /usr/local/bin/claude "$@" 2> >(grep -v "switched 
 USER claude
 WORKDIR /workspace
 
-ENTRYPOINT ["claude-wrapper", "--permission-mode", "bypassPermissions"]
+ENTRYPOINT ["claude-wrapper"]

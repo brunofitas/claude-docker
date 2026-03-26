@@ -3,6 +3,7 @@ name = "claude-docker"
 version = "1.0.0"
 description = "Run Claude Code in Docker on your current directory"
 requires-python = ">=3.10"
+license = "MIT"
 
 [project.scripts]
 claude-docker = "claude_docker.cli:main"
@@ -19,3 +20,14 @@ claude_docker = ["Dockerfile"]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.4.0"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
