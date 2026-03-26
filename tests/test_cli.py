@@ -8,6 +8,7 @@ import pytest
 
 from claude_docker.cli import (
     CONTAINER_HOME,
+    CREDENTIAL_DIRS,
     DEFAULT_PERMISSION_MODE,
     IMAGE_NAME,
     PERMISSION_MODES,
@@ -17,6 +18,7 @@ from claude_docker.cli import (
     build_image,
     get_claude_dir,
     get_claude_json_path,
+    get_credential_mounts,
     get_oauth_token,
     parse_args,
     prepare_claude_json,
@@ -65,6 +67,68 @@ class TestParseArgs:
         assert args.permission_mode == "plan"
         assert args.build is True
         assert remaining == ["-p", "test"]
+
+    def test_network_host_flag(self):
+        args, _ = parse_args(["--network-host"])
+        assert args.network_host is True
+
+    def test_network_host_default_false(self):
+        args, _ = parse_args([])
+        assert args.network_host is False
+
+    def test_no_mount_creds_flag(self):
+        args, _ = parse_args(["--no-mount-creds"])
+        assert args.no_mount_creds is True
+
+    def test_no_mount_creds_default_false(self):
+        args, _ = parse_args([])
+        assert args.no_mount_creds is False
+
+
+# --- get_credential_mounts ---
+
+
+class TestGetCredentialMounts:
+    def test_returns_existing_dirs(self, tmp_path):
+        # Create fake credential dirs
+        gh_dir = tmp_path / ".config" / "gh"
+        gh_dir.mkdir(parents=True)
+        aws_dir = tmp_path / ".aws"
+        aws_dir.mkdir()
+
+        with mock.patch("claude_docker.cli.Path.home", return_value=tmp_path):
+            mounts = get_credential_mounts()
+
+        host_paths = [m[0] for m in mounts]
+        assert str(gh_dir) in host_paths
+        assert str(aws_dir) in host_paths
+
+    def test_skips_missing_dirs(self, tmp_path):
+        # No credential dirs exist
+        with mock.patch("claude_docker.cli.Path.home", return_value=tmp_path):
+            mounts = get_credential_mounts()
+        assert mounts == []
+
+    def test_only_returns_dirs_not_files(self, tmp_path):
+        # Create a file where a dir is expected
+        aws_path = tmp_path / ".aws"
+        aws_path.write_text("not a dir")
+
+        with mock.patch("claude_docker.cli.Path.home", return_value=tmp_path):
+            mounts = get_credential_mounts()
+        assert mounts == []
+
+    def test_container_paths_match_credential_dirs(self, tmp_path):
+        # Create all credential dirs
+        for rel_path, _ in CREDENTIAL_DIRS:
+            (tmp_path / rel_path).mkdir(parents=True, exist_ok=True)
+
+        with mock.patch("claude_docker.cli.Path.home", return_value=tmp_path):
+            mounts = get_credential_mounts()
+
+        container_paths = [m[1] for m in mounts]
+        expected = [cp for _, cp in CREDENTIAL_DIRS]
+        assert container_paths == expected
 
 
 # --- prepare_claude_json ---
@@ -355,6 +419,27 @@ class TestMain:
             cmd = self._run_main(argv=["--permission-mode", mode])
             idx = cmd.index("--permission-mode")
             assert cmd[idx + 1] == mode
+
+    def test_network_host_flag_adds_network_option(self):
+        cmd = self._run_main(argv=["--network-host"])
+        idx = cmd.index("--network")
+        assert cmd[idx + 1] == "host"
+
+    def test_no_network_host_by_default(self):
+        cmd = self._run_main()
+        assert "--network" not in cmd
+
+    def test_credential_mounts_added_by_default(self):
+        fake_mounts = [("/home/user/.config/gh", f"{CONTAINER_HOME}/.config/gh")]
+        with mock.patch("claude_docker.cli.get_credential_mounts", return_value=fake_mounts):
+            cmd = self._run_main()
+        assert f"/home/user/.config/gh:{CONTAINER_HOME}/.config/gh:ro" in cmd
+
+    def test_no_mount_creds_skips_credential_mounts(self):
+        fake_mounts = [("/home/user/.config/gh", f"{CONTAINER_HOME}/.config/gh")]
+        with mock.patch("claude_docker.cli.get_credential_mounts", return_value=fake_mounts):
+            cmd = self._run_main(argv=["--no-mount-creds"])
+        assert not any(".config/gh" in arg for arg in cmd)
 
     def test_build_flag_triggers_build(self):
         with (

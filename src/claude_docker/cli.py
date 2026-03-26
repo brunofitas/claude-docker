@@ -23,6 +23,14 @@ PERMISSION_MODES = [
 
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
+# Host credential directories to auto-mount (host_path_relative_to_home, container_path)
+CREDENTIAL_DIRS = [
+    (".config/gh", f"{CONTAINER_HOME}/.config/gh"),  # GitHub CLI
+    (".aws", f"{CONTAINER_HOME}/.aws"),  # AWS CLI
+    (".azure", f"{CONTAINER_HOME}/.azure"),  # Azure CLI
+    (".config/gcloud", f"{CONTAINER_HOME}/.config/gcloud"),  # Google Cloud SDK
+]
+
 
 def build_image():
     dockerfile = Path(__file__).parent / "Dockerfile"
@@ -114,6 +122,17 @@ def get_oauth_token():
     return None
 
 
+def get_credential_mounts():
+    """Detect existing host credential directories and return mount pairs."""
+    mounts = []
+    home = Path.home()
+    for rel_path, container_path in CREDENTIAL_DIRS:
+        host_path = home / rel_path
+        if host_path.is_dir():
+            mounts.append((str(host_path), container_path))
+    return mounts
+
+
 def get_claude_json_path():
     """Get the path to .claude.json based on platform."""
     if platform.system() == "Windows":
@@ -185,6 +204,16 @@ def parse_args(argv=None):
         action="store_true",
         help="Force rebuild the Docker image",
     )
+    parser.add_argument(
+        "--network-host",
+        action="store_true",
+        help="Run container with --network host (enables OAuth browser callbacks)",
+    )
+    parser.add_argument(
+        "--no-mount-creds",
+        action="store_true",
+        help="Disable auto-mounting of host credential directories",
+    )
 
     args, remaining = parser.parse_known_args(argv)
     return args, remaining
@@ -210,12 +239,19 @@ def main():
         "run",
         "--rm",
         "-it",
-        "-v",
-        f"{cwd}:/workspace",
     ]
+
+    if args.network_host:
+        cmd += ["--network", "host"]
+
+    cmd += ["-v", f"{cwd}:/workspace"]
 
     if claude_dir.exists():
         cmd += ["-v", f"{claude_dir}:{CONTAINER_HOME}/.claude"]
+
+    if not args.no_mount_creds:
+        for host_path, container_path in get_credential_mounts():
+            cmd += ["-v", f"{host_path}:{container_path}:ro"]
 
     patched_json = None
     if claude_json.exists():
