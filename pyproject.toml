@@ -1,0 +1,21 @@
+[project]
+name = "claude-docker"
+version = "1.0.0"
+description = "Run Claude Code in Docker on your current directory"
+requires-python = ">=3.10"
+
+[project.scripts]
+claude-docker = "claude_docker.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+claude_docker = ["Dockerfile"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
