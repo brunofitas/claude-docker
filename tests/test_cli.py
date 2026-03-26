@@ -68,12 +68,12 @@ class TestParseArgs:
         assert args.build is True
         assert remaining == ["-p", "test"]
 
-    def test_network_host_flag(self):
-        args, _ = parse_args(["--network-host"])
+    def test_network_host_default_true(self):
+        args, _ = parse_args([])
         assert args.network_host is True
 
-    def test_network_host_default_false(self):
-        args, _ = parse_args([])
+    def test_no_network_host_flag(self):
+        args, _ = parse_args(["--no-network-host"])
         assert args.network_host is False
 
     def test_no_mount_creds_flag(self):
@@ -420,13 +420,13 @@ class TestMain:
             idx = cmd.index("--permission-mode")
             assert cmd[idx + 1] == mode
 
-    def test_network_host_flag_adds_network_option(self):
-        cmd = self._run_main(argv=["--network-host"])
+    def test_network_host_enabled_by_default(self):
+        cmd = self._run_main()
         idx = cmd.index("--network")
         assert cmd[idx + 1] == "host"
 
-    def test_no_network_host_by_default(self):
-        cmd = self._run_main()
+    def test_no_network_host_disables_it(self):
+        cmd = self._run_main(argv=["--no-network-host"])
         assert "--network" not in cmd
 
     def test_credential_mounts_added_by_default(self):

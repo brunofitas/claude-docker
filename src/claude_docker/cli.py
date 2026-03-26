@@ -207,7 +207,14 @@ def parse_args(argv=None):
     parser.add_argument(
         "--network-host",
         action="store_true",
-        help="Run container with --network host (enables OAuth browser callbacks)",
+        default=True,
+        help="Run container with --network host (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-network-host",
+        action="store_false",
+        dest="network_host",
+        help="Use default bridge networking instead of host",
     )
     parser.add_argument(
         "--no-mount-creds",
